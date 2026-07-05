@@ -33,12 +33,13 @@ N_FOLDS = 5
 SEED = 42
 
 
-def build_matrix(train_text, test_text, use_spelling):
-    word_vec = TfidfVectorizer(ngram_range=(1, 2), min_df=3, max_df=0.9,
-                               sublinear_tf=True, max_features=40000,
+def build_matrix(train_text, test_text, use_spelling, max_word=20000,
+                 max_char=20000, char_ngram=(3, 4)):
+    word_vec = TfidfVectorizer(ngram_range=(1, 2), min_df=5, max_df=0.9,
+                               sublinear_tf=True, max_features=max_word,
                                strip_accents="unicode")
-    char_vec = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5),
-                               min_df=3, sublinear_tf=True, max_features=40000)
+    char_vec = TfidfVectorizer(analyzer="char_wb", ngram_range=char_ngram,
+                               min_df=5, sublinear_tf=True, max_features=max_char)
     Xw_tr = word_vec.fit_transform(train_text)
     Xw_te = word_vec.transform(test_text)
     Xc_tr = char_vec.fit_transform(train_text)
@@ -60,34 +61,42 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-spelling", action="store_true",
                     help="Skip the (slow) spell-check feature for max speed.")
+    ap.add_argument("--folds", type=int, default=3)
+    ap.add_argument("--lr", type=float, default=0.1)
+    ap.add_argument("--n-estimators", type=int, default=800)
+    ap.add_argument("--num-leaves", type=int, default=31)
+    ap.add_argument("--feature-fraction", type=float, default=0.3)
+    ap.add_argument("--max-word", type=int, default=20000)
+    ap.add_argument("--max-char", type=int, default=20000)
     args = ap.parse_args()
 
     train = pd.read_csv(DATA / "train.csv")
     test = pd.read_csv(DATA / "test.csv")
     y = train["score"].values.astype(float)
 
-    print("Vectorising ...")
+    print("Vectorising ...", flush=True)
     X, X_test = build_matrix(train["full_text"], test["full_text"],
-                             use_spelling=not args.no_spelling)
-    print("Feature matrix:", X.shape)
+                             use_spelling=not args.no_spelling,
+                             max_word=args.max_word, max_char=args.max_char)
+    print("Feature matrix:", X.shape, flush=True)
 
-    params = dict(objective="regression", metric="rmse", learning_rate=0.05,
-                  num_leaves=63, feature_fraction=0.6, bagging_fraction=0.8,
-                  bagging_freq=1, min_child_samples=20, n_estimators=3000,
-                  random_state=SEED, verbose=-1)
+    params = dict(objective="regression", metric="rmse", learning_rate=args.lr,
+                  num_leaves=args.num_leaves, feature_fraction=args.feature_fraction,
+                  bagging_fraction=0.8, bagging_freq=1, min_child_samples=20,
+                  n_estimators=args.n_estimators, random_state=SEED, verbose=-1)
 
     oof = np.zeros(len(train))
     test_pred = np.zeros(len(test))
-    skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=SEED)
+    skf = StratifiedKFold(n_splits=args.folds, shuffle=True, random_state=SEED)
 
     for fold, (tr, va) in enumerate(skf.split(X, train["score"])):
         model = lgb.LGBMRegressor(**params)
         model.fit(X[tr], y[tr], eval_set=[(X[va], y[va])],
-                  callbacks=[lgb.early_stopping(80, verbose=False)])
+                  callbacks=[lgb.early_stopping(50, verbose=False)])
         oof[va] = model.predict(X[va])
-        test_pred += model.predict(X_test) / N_FOLDS
+        test_pred += model.predict(X_test) / args.folds
         print(f"  fold {fold}: raw-QWK={qwk(y[va], oof[va]):.4f} "
-              f"best_iter={model.best_iteration_}")
+              f"best_iter={model.best_iteration_}", flush=True)
 
     rounder = OptimizedRounder().fit(oof, y)
     oof_labels = rounder.predict(oof)
