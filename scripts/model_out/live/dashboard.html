@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>AES 2.0 — LightGBM live training</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+ body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:24px;background:#0f1420;color:#e6e9ef}
+ h1{font-size:20px;margin:0 0 4px} .sub{color:#8b93a7;font-size:13px;margin-bottom:18px}
+ .cards{display:flex;gap:14px;margin-bottom:20px;flex-wrap:wrap}
+ .card{background:#1a2130;border:1px solid #2a3245;border-radius:10px;padding:14px 18px;min-width:150px}
+ .card .k{color:#8b93a7;font-size:12px} .card .v{font-size:22px;font-weight:600;margin-top:4px}
+ .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+ .run{background:#3fbf5f;box-shadow:0 0 8px #3fbf5f} .stop{background:#e0554e}
+ .wrap{background:#1a2130;border:1px solid #2a3245;border-radius:10px;padding:16px;margin-bottom:18px}
+ canvas{max-height:340px}
+</style></head><body>
+<h1>Automated Essay Scoring 2.0 — LightGBM live training</h1>
+<div class="sub">boosting rounds as steps · metrics polled every 2s · to stop: <code>touch model_out/live/STOP</code></div>
+<div class="cards">
+ <div class="card"><div class="k">Status</div><div class="v" id="status">…</div></div>
+ <div class="card"><div class="k">Round</div><div class="v" id="iter">–</div></div>
+ <div class="card"><div class="k">Val QWK</div><div class="v" id="qwk">–</div></div>
+ <div class="card"><div class="k">Best Val QWK</div><div class="v" id="best">–</div></div>
+ <div class="card"><div class="k">Val RMSE</div><div class="v" id="rmse">–</div></div>
+ <div class="card"><div class="k">Checkpoints</div><div class="v" id="ckpts">–</div></div>
+</div>
+<div class="wrap"><canvas id="lossChart"></canvas></div>
+<div class="wrap"><canvas id="qwkChart"></canvas></div>
+<script>
+const ax={scales:{x:{ticks:{color:'#8b93a7'},grid:{color:'#222a3a'}},y:{ticks:{color:'#8b93a7'},grid:{color:'#222a3a'}}},plugins:{legend:{labels:{color:'#e6e9ef'}}},animation:false};
+const loss=new Chart(document.getElementById('lossChart'),{type:'line',data:{labels:[],datasets:[
+ {label:'train RMSE',data:[],borderColor:'#5b8cff',backgroundColor:'#5b8cff',pointRadius:0,tension:.2},
+ {label:'val RMSE',data:[],borderColor:'#ff9f43',backgroundColor:'#ff9f43',pointRadius:0,tension:.2}]},
+ options:{...ax,plugins:{...ax.plugins,title:{display:true,text:'Train vs Val loss (RMSE)',color:'#e6e9ef'}}}});
+const qwkc=new Chart(document.getElementById('qwkChart'),{type:'line',data:{labels:[],datasets:[
+ {label:'val QWK',data:[],borderColor:'#3fbf5f',backgroundColor:'#3fbf5f',pointRadius:0,tension:.2}]},
+ options:{...ax,plugins:{...ax.plugins,title:{display:true,text:'Validation QWK (the competition metric)',color:'#e6e9ef'}}}});
+async function tick(){
+ try{
+  const m=await (await fetch('metrics.json?_='+Date.now())).json();
+  loss.data.labels=m.iterations; loss.data.datasets[0].data=m.train_rmse; loss.data.datasets[1].data=m.val_rmse; loss.update();
+  qwkc.data.labels=m.iterations; qwkc.data.datasets[0].data=m.val_qwk; qwkc.update();
+  const running=m.status==='running';
+  document.getElementById('status').innerHTML='<span class="dot '+(running?'run':'stop')+'"></span>'+m.status;
+  const n=m.iterations.length;
+  document.getElementById('iter').textContent=n?m.iterations[n-1]:'–';
+  document.getElementById('qwk').textContent=n?m.val_qwk[n-1].toFixed(4):'–';
+  document.getElementById('rmse').textContent=n?m.val_rmse[n-1].toFixed(4):'–';
+  document.getElementById('best').textContent=m.best?m.best.val_qwk.toFixed(4)+' @'+m.best.iter:'–';
+  document.getElementById('ckpts').textContent=m.checkpoints?m.checkpoints.length:'–';
+ }catch(e){document.getElementById('status').textContent='waiting for metrics…';}
+}
+setInterval(tick,2000); tick();
+</script></body></html>
